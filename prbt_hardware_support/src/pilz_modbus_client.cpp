@@ -43,6 +43,7 @@ PilzModbusClient::PilzModbusClient(ros::NodeHandle& nh,
                                                &PilzModbusClient::modbus_write_service_cb,
                                                this) )
 {
+  diag_updater_.add("ClientStateUpdater", this, &PilzModbusClient::report_state);    
 }
 
 
@@ -76,6 +77,7 @@ bool PilzModbusClient::init(const char* ip, unsigned int port)
   {
     ROS_ERROR_STREAM("Modbus-client not in correct state." << state_);
     state_ = State::not_initialized;
+    diag_updater_.update();
     return false;
   }
 
@@ -83,6 +85,7 @@ bool PilzModbusClient::init(const char* ip, unsigned int port)
   {
     ROS_ERROR("Init failed");
     state_ = State::not_initialized;
+    diag_updater_.update();
     return false;
   }
 
@@ -90,6 +93,7 @@ bool PilzModbusClient::init(const char* ip, unsigned int port)
 
   state_ = State::initialized;
   ROS_DEBUG_STREAM("Connection to " << ip << ":" << port << " establised");
+  diag_updater_.update();
   return true;
 }
 
@@ -99,12 +103,15 @@ void PilzModbusClient::sendDisconnectMsg()
   msg.disconnect.data = true;
   msg.header.stamp = ros::Time::now();
   modbus_read_pub_.publish(msg);
+  diag_updater_.broadcast(diagnostic_updater::DiagnosticStatusWrapper::ERROR, "Disconnect");
   ros::spinOnce();
 }
 
 void PilzModbusClient::run()
 {
   State expectedState {State::initialized};
+  diag_updater_.update();
+  
   if (!state_.compare_exchange_strong(expectedState, State::running))
   {
     throw PilzModbusClientException("Modbus-client not in correct state.");
@@ -169,12 +176,32 @@ void PilzModbusClient::run()
     }
     modbus_read_pub_.publish(msg);
 
+    diag_updater_.update();
+
     ros::spinOnce();
     rate.sleep();
   }
 
   stop_run_ = false;
   state_ = State::not_initialized;
+}
+
+void PilzModbusClient::report_state(diagnostic_updater::DiagnosticStatusWrapper &stat)
+{
+  switch(state_){
+    case State::not_initialized:
+      stat.summary(stat.ERROR, "Modbus client is not initialized");
+      break;
+    case State::initializing:
+      stat.summary(stat.WARN, "Modbus client is initializing");
+      break;
+    case State::initialized:
+      stat.summary(stat.WARN, "initialized");
+      break;
+    case State::running:
+      stat.summary(stat.OK, "Modbus client is running");
+      break;
+  }
 }
 
 }  // namespace prbt_hardware_support
